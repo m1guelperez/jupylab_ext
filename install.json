@@ -1,0 +1,5 @@
+{
+  "packageManager": "python",
+  "packageName": "notebook_labeling",
+  "uninstallInstructions": "Use your Python package manager (pip, conda, etc.) to uninstall the package notebook_labeling"
+}

@@ -1,0 +1,19 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v4.2.1
+_src_path: https://github.com/jupyterlab/extension-template
+author_email: anony@mous.com
+author_name: Anonymized
+data_format: string
+file_extension: ''
+has_binder: false
+has_settings: false
+kind: server
+labextension_name: notebook_labeling
+mimetype: ''
+mimetype_name: ''
+project_short_description: A JupyterLab extension to label notebooks.
+python_name: notebook_labeling
+repository: git@github.com:xxx/yyy.git
+test: true
+viewer_name: ''
+

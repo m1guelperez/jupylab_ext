@@ -1,17 +1,20 @@
-from pprint import pprint
 import re
-from colorama import Fore, Style
-import sys
 from notebook_labeling.nlp.constants import (
-    LABELS,
     DEBUG_MODE,
     INSERT_HEADERS,
+    CLASSIFIERS,
+    VECTORIZERS,
+    ALL_TAGS,
+    KEYWORDS,
+    PATH_TO_MODELS,
 )
+import joblib
+import xgboost as xgb
+from datetime import datetime
 
 OFFSET = 0
 
 
-# Non capturing old: re.compile(r"^(?:(?:[A-Z_0-9]*[a-z_,\s]+)|(?:[a-z_]+[A-Z_0-9]*))=")
 pattern_lhs = re.compile(r"^(?:(?:[A-Z_0-9]*[a-z_,\s]+)|(?:[a-z_]+[A-Z_0-9a-z\s]*))=")
 pattern_slicing_assignment = re.compile(r"^[a-zA-Z]{1,}\[['\"a-zA-Z]{1,}\]\s?=")
 slicing_pattern = re.compile(r"[a-zA-Z_]{1,}\[(?:[\[\]_0-9'\"a-zA-Z]|==){1,}\]")
@@ -20,8 +23,6 @@ pattern_print = re.compile(r"\bprint\(.+\)")
 pattern_print_replacement = re.compile(r"\"[^\"]{1,}\"")
 pattern_paths = re.compile(r"(/([\w.-]+|\s?){1,}){1,}/?")
 pattern_constants_without_suffix = re.compile(r"^[A-Z]{2,}(?:[_A-Z0-9]{1,})\s?=")
-# These regex performs a bit better on the headergen (without hybrid) set but a bit worse on the validation set and it captures variables lik X1 as constants
-# pattern_constants_without_suffix = re.compile(r"^[A-Z]{1,}(?:[_A-Z0-9]{1,})\s?=")
 
 
 def path_trim_extension(path: str) -> str:
@@ -50,7 +51,7 @@ def clear_prints(text_as_list: list) -> list:
         else:
             temp.append(line)
     if found_prints:
-        temp.insert(0, "CHECKPOINT")
+        temp.insert(0, KEYWORDS.VALIDATION)
     return temp
 
 
@@ -183,7 +184,7 @@ def rename_const(text_as_list: str) -> list:
             len(pattern_constants_without_suffix.findall(line)) > 0
             and not already_found
         ):
-            new_list.insert(0, "SETUP")
+            new_list.insert(0, KEYWORDS.SETUP)
             already_found = True
         elif len(pattern_constants_without_suffix.findall(line)) > 0 and already_found:
             continue
@@ -219,7 +220,7 @@ def rename_magic_commands(text_as_list: list) -> list:
     """Removes all magic commands from the notebook. If the cell contains a magic command and was not labeled as SETUP, it will be labeled as SETUP"""
     setup_cell = False
     for line in text_as_list:
-        if "SETUP" in line:
+        if KEYWORDS.SETUP in line:
             setup_cell = True
             break
     temp = []
@@ -231,7 +232,7 @@ def rename_magic_commands(text_as_list: list) -> list:
         elif (
             str(line).strip().startswith("%") or str(line).strip().startswith("!")
         ) and not setup_cell:
-            temp.insert(0, "SETUP")
+            temp.insert(0, KEYWORDS.SETUP)
         else:
             temp.append(line)
     return temp
@@ -244,10 +245,10 @@ def rename_implicit_returns(text_as_list: list) -> list:
     elif (
         (str(temp[-1])[-1].isalpha() or str(temp[-1])[-1].isdigit())
         and "=" not in str(temp[-1])
-        and (temp[-1] != "ASSIGN" and temp[-1] != "SETUP")
+        and (temp[-1] != KEYWORDS.ASSIGN and temp[-1] != KEYWORDS.SETUP)
         and len(temp[-1].split(" ")) == 1
     ):
-        temp.insert(0, "CHECKPOINT")
+        temp.insert(0, KEYWORDS.VALIDATION)
     return temp
 
 
@@ -260,7 +261,7 @@ def rename_slicing_assignments(text_as_list: list) -> list:
             new_list.append(
                 re.sub(
                     slicing_pattern,
-                    "SLICE",
+                    KEYWORDS.SLICE,
                     line,
                 )
             )
@@ -308,7 +309,7 @@ def insert_tags(phase: list, cell_number: int, original_notebook: dict):
             {
                 "cell_type": "markdown",
                 "metadata": {"position": cell_number + OFFSET},
-                "source": ["#### " + ", ".join(phase)],
+                "source": ["##### " + ", ".join(phase)],
             },
         )
         OFFSET += 1
@@ -325,11 +326,10 @@ def make_labels(heuristics_dict: dict, original_notebook: dict):
             if len(hits) == 0:
                 if DEBUG_MODE[0]:
                     print("No label found")
-                    pprint(heuristics_dict[key])
                 insert_tags(["None"], key, original_notebook)
             elif len(hits) > 0:
                 for hit in hits:
-                    tags.append(LABELS[hit])
+                    tags.append(ALL_TAGS[hit])
                 insert_tags(tags, key, original_notebook)
 
 
@@ -364,76 +364,59 @@ def number_of_print_calls(text_as_list: list) -> int:
     return counter
 
 
-def manually_pre_processing(text_as_list: list):
-    if isinstance(text_as_list, str):
-        text_as_list = text_as_list.split("\n")
-    pprint(text_as_list)
-    print(Fore.RED + "Original notebook")
-    print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = clean_notebook_from_comments(text_as_list)
-        pprint(processed)
-        print(Fore.RED + "Deleted comments")
-        print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = clean_notebook_from_newlines(processed)
-        pprint(processed)
-        print(Fore.RED + "Deleted newlines")
-        print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = delete_paths(processed)
-        pprint(processed)
-        print(Fore.RED + "Cleared paths")
-        print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = clear_prints(processed)
-        pprint(processed)
-        print(Fore.RED + "Cleared prints")
-        print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = rename_const(processed)
-        pprint(processed)
-        print(Fore.RED + "Renamed constants")
-        print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = rename_imports(processed)
-        pprint(processed)
-        print(Fore.RED + "Renamed imports")
-        print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = rename_magic_commands(processed)
-        pprint(processed)
-        print(Fore.RED + "Renamed magic commands")
-        print(Style.RESET_ALL)
-    user_input = input("Continue? (y/n)")
-    if user_input == "y":
-        processed = rename_assignments(processed)
-        pprint(processed)
-        print(Fore.RED + "Renamed assignments")
-        print(Style.RESET_ALL)
+def delete_kaggle_cells(analyzed_dict: dict) -> dict:
+    """This method automatically removes kaggle cells from our evaluation set as well as a particular spanish cell."""
+    new_dict = {"source": []}
+    for cell in analyzed_dict["source"]:
+        if (
+            (
+                "q1." in " ".join(cell["content_old"])
+                and not "v18q1" in " ".join(cell["content_old"])
+            )
+            or "q2." in " ".join(cell["content_old"])
+            or "q3" in " ".join(cell["content_old"])
+            or "q4" in " ".join(cell["content_old"])
+            or "q5" in " ".join(cell["content_old"])
+            or "q6" in " ".join(cell["content_old"])
+            or "q7" in " ".join(cell["content_old"])
+            or "q8" in " ".join(cell["content_old"])
+            or "q9" in " ".join(cell["content_old"])
+            or "step_1" in " ".join(cell["content_old"])
+            or "step_2" in " ".join(cell["content_old"])
+            or "step_3" in " ".join(cell["content_old"])
+            or "step_4" in " ".join(cell["content_old"])
+            or "q_1" in " ".join(cell["content_old"])
+            or "q_2" in " ".join(cell["content_old"])
+            or "q_3" in " ".join(cell["content_old"])
+            or "q_4" in " ".join(cell["content_old"])
+            or "q_5" in " ".join(cell["content_old"])
+            or "q_6" in " ".join(cell["content_old"])
+            or "q_7" in " ".join(cell["content_old"])
+            or "q_8" in " ".join(cell["content_old"])
+            or "q_9" in " ".join(cell["content_old"])
+            # A spanish cell
+            or "bisseçao" in " ".join(cell["content_old"])
+        ):
+            continue
+        else:
+            new_dict["source"].append(cell)
+    return new_dict
 
 
-# pprint(
-#     preprocess_source_cell_nlp(
-#         [
-#             "model.fit(x_train, y_train)",
-#             "PATH=hello.txt",
-#             "x_train = np.array([ 1, 2, 3, 4])",
-#             "y_train = np.array([ 2, 3, 4, 4])",
-#             "itemcategories_data = pd.read_csv('..path')",
-#             "items_data = pd.read_csv('..path')",
-#             "shops_data = pd.read_csv('..path')",
-#             "test_data = pd.read_csv('..path')",
-#             "TEST = TEST.train",
-#             "model.fit(x_train, y_train)",
-#             "df.head",
-#         ]
-#     )
-# )
+def load_pre_trained_models():
+    for tag in ALL_TAGS.keys():
+        debug_print("Loading " + tag + " ...")
+        classifier = xgb.XGBClassifier()
+        classifier.load_model(
+            PATH_TO_MODELS
+            + "model_"
+            + tag.replace("-", "_").replace(" ", "_")
+            + "_boost.json"
+        )
+        CLASSIFIERS[tag] = classifier
+        VECTORIZERS[tag] = joblib.load(
+            PATH_TO_MODELS
+            + "vectorizer_"
+            + tag.replace("-", "_").replace(" ", "_")
+            + "_boost.joblib"
+        )

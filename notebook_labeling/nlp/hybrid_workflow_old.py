@@ -7,7 +7,6 @@ from notebook_labeling.nlp.heuristics import (
     get_current_heuristic_dict,
     init_heuristics_dict,
     reset_heuristics_dict,
-    load_pre_trained_models,
     create_cell_properties,
     run_source_nlp_hybrid_heuristics,
 )
@@ -15,6 +14,7 @@ from notebook_labeling.nlp.utils import (
     make_labels,
     preprocess_source_cell_nlp,
     debug_print,
+    load_pre_trained_models,
 )
 
 

@@ -1,47 +1,18 @@
 import re
-import joblib
-from pprint import pprint
-import xgboost as xgb
-from datetime import datetime
-from notebook_labeling.nlp.utils import number_of_print_calls, debug_print
+from notebook_labeling.nlp.utils import debug_print
 from notebook_labeling.nlp.constants import (
-    HEURISTIC_NAMES_HYBRID,
-    FILE_NAME_MAPPINGS,
-    HEURISTIC_NAMES,
-    DICT_NAMES,
+    VECTORIZERS,
+    CLASSIFIERS,
+    ALL_TAGS,
+    ACTIVITY,
+    EXPLICIT_MODELS,
+    KEYWORDS,
 )
 
-TAG_MAPPINGS = {
-    "Setup Activity": "Setup_Activity",
-    "Data Ingestion": "Data_Ingestion_Activity",
-    "Data Validation": "Data_Validation_Activity",
-    "Data Pre-Processing": "Data_Pre_Processing_Activity",
-    "Model Training": "Model_Training_Activity",
-    "Model Evaluation": "Model_Evaluation_Activity",
-    "Checkpoint Activity": "Checkpoint_Activity",
-    "Post Development Phase": "Post_Development_Phase",
-    "Data Visualization Phase": "Data_Visualization_Phase",
-}
-
 CELLS = None
-CLASSIFIERS = None
-VECTORIZERS = None
 pattern_constants = re.compile(r"^[A-Z]{1,}(?:[_A-Z0-9]{1,})=.{1,}$")
 pattern_hardcoded_constant = re.compile(r"\bCONST\b")
 pattern_hardcoded_setup = re.compile(r"\bSETUP\b")
-
-
-FILE_NAME_WORDS = [
-    "Data Pre-Processing Activity",
-    "Model Training Activity",
-    "Model Evaluation Activity",
-    "Data Ingestion Activity",
-    "Data Validation Activity",
-    "Setup Activity",
-    "Checkpoint Activity",
-    "Data Visualization Phase",
-    "Post Development Phase",
-]
 
 
 # If a cell has a match for two heuristics, we can suggest to split the cell into subcells
@@ -55,15 +26,14 @@ def init_heuristics_dict(cell_count: int):
             "cell_output_type": "unknown",
             "number_of_tags": "unknown",
             "activities": {
-                "setup_activity": -999,
-                "data_ingestion_activity": -999,
-                "data_validation_activity": -999,
-                "data_pre_processing_activity": -999,
-                "model_training_activity": -999,
-                "model_evaluation_activity": -999,
-                "post_development_phase": -999,
-                "checkpoint_activity": -999,
-                "data_visualization_phase": -999,
+                ACTIVITY.SETUP_NOTEBOOK: -999,
+                ACTIVITY.INGEST_DATA: -999,
+                ACTIVITY.VALIDATE_DATA: -999,
+                ACTIVITY.PROCESS_DATA: -999,
+                ACTIVITY.TRAIN_MODEL: -999,
+                ACTIVITY.EVALUATE_MODEL: -999,
+                ACTIVITY.TRANSFER_RESULTS: -999,
+                ACTIVITY.VISUALIZE_DATA: -999,
             },
         }
     global CELLS
@@ -71,62 +41,12 @@ def init_heuristics_dict(cell_count: int):
     debug_print("Initialized dictionaries for each notebook cell.")
 
 
-def load_pre_trained_models():
-    global CLASSIFIERS
-    global VECTORIZERS
-    classifiers = {}
-    vectorizers = {}
-    for tag in TAG_MAPPINGS.keys():
-        debug_print("Loading " + tag + " ...")
-        classifier = xgb.XGBClassifier()
-        classifier.load_model(
-            "./notebook_labeling/resources/new_trained_models/model_"
-            + TAG_MAPPINGS[tag].replace("-", "_").replace(" ", "_")
-            + "_boost-"
-            + "2023-10-01"
-            + ".json"
-        )
-        classifiers[TAG_MAPPINGS[tag]] = classifier
-        vectorizers[TAG_MAPPINGS[tag]] = joblib.load(
-            "./notebook_labeling/resources/new_trained_models/vectorizer_"
-            + TAG_MAPPINGS[tag].replace("-", "_").replace(" ", "_")
-            + "_boost-"
-            + "2023-10-01"
-            + ".joblib"
-        )
-
-    CLASSIFIERS = classifiers
-    VECTORIZERS = vectorizers
-
-
-heuristic_name = [
-    HEURISTIC_NAMES.CHECKPOINT_ACTIVITY,
-    HEURISTIC_NAMES.DATA_INGESTION_ACTIVTIY,
-    HEURISTIC_NAMES.DATA_PRE_PROCESSING_ACTIVITY,
-    HEURISTIC_NAMES.DATA_VALIDATION,
-    HEURISTIC_NAMES.MODEL_EVALUATION_ACTIVITY,
-    HEURISTIC_NAMES.MODEL_TRAINING_ACTIVITY,
-    HEURISTIC_NAMES.POST_DEVELOPMENT_PHASE,
-    HEURISTIC_NAMES.SETUP_ACTIVITY,
-    HEURISTIC_NAMES.DATA_VISUALIZATION_PHASE,
-]
-
-heuristic_name_hybrid = [
-    HEURISTIC_NAMES_HYBRID.DATA_INGESTION_ACTIVTIY,
-    HEURISTIC_NAMES_HYBRID.DATA_PRE_PROCESSING_ACTIVITY,
-    HEURISTIC_NAMES_HYBRID.DATA_VALIDATION,
-    HEURISTIC_NAMES_HYBRID.MODEL_EVALUATION_ACTIVITY,
-    HEURISTIC_NAMES_HYBRID.MODEL_TRAINING_ACTIVITY,
-    HEURISTIC_NAMES_HYBRID.POST_DEVELOPMENT_PHASE,
-]
-
-
 def setup_phase_heuristic_hybrid(content: str) -> int:
-    if "SETUP" in content:
+    if KEYWORDS.SETUP in content:
         return 1
     else:
-        classifier = CLASSIFIERS[TAG_MAPPINGS["Setup Activity"]]
-        vectorizer = VECTORIZERS[TAG_MAPPINGS["Setup Activity"]]
+        classifier = CLASSIFIERS[ACTIVITY.SETUP_NOTEBOOK]
+        vectorizer = VECTORIZERS[ACTIVITY.SETUP_NOTEBOOK]
         vectorized_cell = vectorizer.transform([content])
         prediction = classifier.predict(vectorized_cell)
         if prediction[0] == 1:
@@ -136,11 +56,11 @@ def setup_phase_heuristic_hybrid(content: str) -> int:
 
 
 def checkpoint_activity_heuristic_hybrid(content: str):
-    if "CHECKPOINT" in content:
+    if KEYWORDS.VALIDATION in content:
         return 1
     else:
-        classifier = CLASSIFIERS[TAG_MAPPINGS["Checkpoint Activity"]]
-        vectorizer = VECTORIZERS[TAG_MAPPINGS["Checkpoint Activity"]]
+        classifier = CLASSIFIERS[ACTIVITY.VALIDATE_DATA]
+        vectorizer = VECTORIZERS[ACTIVITY.VALIDATE_DATA]
         vectorized_cell = vectorizer.transform([content])
         prediction = classifier.predict(vectorized_cell)
         if prediction == 1:
@@ -153,8 +73,8 @@ def data_visualization_heuristic_hybrid(content: str, cell_number: int):
     if CELLS[cell_number]["cell_output_type"] == "display_data":
         return 1
     else:
-        classifier = CLASSIFIERS[TAG_MAPPINGS["Data Visualization Phase"]]
-        vectorizer = VECTORIZERS[TAG_MAPPINGS["Data Visualization Phase"]]
+        classifier = CLASSIFIERS[ACTIVITY.VISUALIZE_DATA]
+        vectorizer = VECTORIZERS[ACTIVITY.VISUALIZE_DATA]
         vectorized_cell = vectorizer.transform([content])
         prediction = classifier.predict(vectorized_cell)
         if prediction == 1:
@@ -178,18 +98,18 @@ def machine_learning_prediction_hybrid(cell_number: int, text_as_list: list) -> 
         return
 
     if setup_phase_heuristic_hybrid(sentence) == 1:
-        CELLS[cell_number]["activities"].update({"setup_activity": float(1)})
+        CELLS[cell_number]["activities"].update({ACTIVITY.SETUP_NOTEBOOK: float(1)})
     if data_visualization_heuristic_hybrid(sentence, cell_number) == 1:
-        CELLS[cell_number]["activities"].update({"data_visualization_phase": float(1)})
+        CELLS[cell_number]["activities"].update({ACTIVITY.VISUALIZE_DATA: float(1)})
     if checkpoint_activity_heuristic_hybrid(sentence) == 1:
-        CELLS[cell_number]["activities"].update({"checkpoint_activity": float(1)})
+        CELLS[cell_number]["activities"].update({ACTIVITY.VALIDATE_DATA: float(1)})
     sentence = " ".join(text_as_list)
-    for phase in heuristic_name_hybrid:
-        sentence_transformed = VECTORIZERS[TAG_MAPPINGS[phase]].transform([sentence])
-        prediciton = CLASSIFIERS[TAG_MAPPINGS[phase]].predict(sentence_transformed)
+    for tag in EXPLICIT_MODELS.keys():
+        sentence_transformed = VECTORIZERS[tag].transform([sentence])
+        prediciton = CLASSIFIERS[tag].predict(sentence_transformed)
 
-        if float(CELLS[cell_number]["activities"][DICT_NAMES[phase]]) < prediciton[0]:
-            CELLS[cell_number]["activities"].update({DICT_NAMES[phase]: prediciton[0]})
+        if float(CELLS[cell_number]["activities"][ALL_TAGS[tag]]) < prediciton[0]:
+            CELLS[cell_number]["activities"].update({ALL_TAGS[tag]: prediciton[0]})
 
 
 def run_source_nlp_hybrid_heuristics(cell_number: int, cell_source: list):
@@ -204,24 +124,3 @@ def reset_heuristics_dict():
     # When assigning a global variable to a new value we need the global keyword otherwise we create a new local variable
     global CELLS
     CELLS = {}
-
-
-def particular_model_test(content: str, tag: str):
-    print(content)
-    classifier = xgb.XGBClassifier()
-    classifier.load_model(
-        "./notebook_labeling.nlp/resources/new_trained_models/model_"
-        + TAG_MAPPINGS[tag].replace("-", "_").replace(" ", "_")
-        + "_boost-"
-        + "2023-09-30"
-        + ".json"
-    )
-    vectorizer = joblib.load(
-        "./notebook_labeling.nlp/resources/new_trained_models/vectorizer_"
-        + TAG_MAPPINGS[tag].replace("-", "_").replace(" ", "_")
-        + "_boost-"
-        + "2023-09-30"
-        + ".joblib"
-    )
-    prediction = classifier.predict(vectorizer.transform([content]))
-    print(prediction)
